@@ -1,27 +1,85 @@
-const std = @import("std");
-const LabLink_CLI = @import("LabLink_CLI");
+const SOCKET_MODE: comptime_int = posix.SOCK.STREAM;
+const PROTOCOL: comptime_int = posix.IPPROTO.TCP;
 
 pub fn main() !void {
-    // Prints to stderr, ignoring potential errors.
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-    try LabLink_CLI.bufferedPrint();
-}
+    const listener_ipaddr: net.IpAddress = try net.IpAddress.parse("127.0.0.1", 5025);
+    const listener_sockaddr: posix.sockaddr = @bitCast(
+        posix.sockaddr.in{
+            .port = mem.nativeToBig(u16, listener_ipaddr.ip4.port), // must
+            .addr = mem.bytesAsValue(u32, &listener_ipaddr.ip4.bytes).*,
+        },
+    );
+    const listener = try posix.socket(
+        listener_sockaddr.family,
+        SOCKET_MODE,
+        PROTOCOL,
+    );
+    defer posix.close(listener);
 
-test "simple test" {
-    const gpa = std.testing.allocator;
-    var list: std.ArrayList(i32) = .empty;
-    defer list.deinit(gpa); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(gpa, 42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
+    try posix.setsockopt(
+        listener,
+        posix.SOL.SOCKET,
+        posix.SO.REUSEADDR,
+        &std.mem.toBytes(@as(c_int, 1)),
+    );
 
-test "fuzz example" {
-    const Context = struct {
-        fn testOne(context: @This(), input: []const u8) anyerror!void {
-            _ = context;
-            // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-            try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input));
-        }
+    try posix.bind(
+        listener,
+        &listener_sockaddr,
+        switch (listener_sockaddr.family) {
+            posix.AF.INET => @as(posix.socklen_t, @intCast(@sizeOf(posix.sockaddr.in))),
+            posix.AF.INET6 => @as(posix.socklen_t, @intCast(@sizeOf(posix.sockaddr.in6))),
+            posix.AF.UNIX => blk: {
+                if (!has_unix_sockets) unreachable;
+                break :blk @as(posix.socklen_t, @intCast(@sizeOf(posix.sockaddr.un)));
+            },
+            else => unreachable,
+        },
+    );
+    try posix.listen(listener, 128);
+
+    var client_sockaddr: posix.sockaddr.storage = undefined;
+    var client_sockaddr_len: posix.socklen_t = @sizeOf(@TypeOf(client_sockaddr));
+
+    // ~/.../zig-x86_64-macos-0.16.0-dev.1316+181b25ce4/lib/std/posix.zig:3481
+    // needs `pub const AcceptError = std.Io.net.Server.AcceptError || error{SocketNotListening};`
+    const socket = posix.accept(
+        listener,
+        @as(*posix.sockaddr, @ptrCast(&client_sockaddr)),
+        &client_sockaddr_len,
+        0,
+    ) catch |err| {
+        std.debug.print("error accept: {}\n", .{err});
+        return;
     };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
+    defer posix.close(socket);
+
+    write(socket, "Hello (and goodbye, server is closing...)\n") catch |err| {
+        debug.print("error writing: {}\n", .{err});
+    };
 }
+
+fn write(socket: posix.socket_t, msg: []const u8) !void {
+    var pos: usize = 0;
+    while (pos < msg.len) {
+        const written = try posix.write(socket, msg[pos..]);
+        if (written == 0) {
+            return error.Closed;
+        }
+        pos += written;
+    }
+}
+
+const std = @import("std");
+const mem = std.mem;
+const net = std.Io.net;
+const posix = std.posix;
+const debug = std.debug;
+const builtin = @import("builtin");
+const native_os = builtin.os.tag;
+
+const has_unix_sockets = switch (native_os) {
+    .windows => builtin.os.version_range.windows.isAtLeast(.win10_rs4) orelse false,
+    .wasi => false,
+    else => true,
+};
