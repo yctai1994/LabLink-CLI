@@ -4,10 +4,10 @@ port: u16,
 const Self: type = @This();
 
 pub fn fromSocketAddress(sock_addr: *SocketAddress) Self {
-    const sockaddr_ip4: posix.sockaddr.in = sock_addr.ip4addr().*;
+    const sa_in: posix.sockaddr.in = sock_addr.ptrCastTo(.in).*;
     return .{
-        .addr = mem.toBytes(sockaddr_ip4.addr),
-        .port = mem.toNative(u16, sockaddr_ip4.port, .big),
+        .addr = mem.toBytes(sa_in.addr),
+        .port = mem.toNative(u16, sa_in.port, .big),
     };
 }
 
