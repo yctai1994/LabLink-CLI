@@ -59,8 +59,45 @@ pub fn fromIPv4Address(ipv4_addr: IPv4Address) Self {
     return self;
 }
 
+test "SocketAddress + IPv4Address roundtrip" {
+    const origin = IPv4Address{ .addr = .{ 123, 12, 3, 1 }, .port = 45678 };
+    const parsed = IPv4Address.fromSocketAddress(
+        @constCast(&Self.fromIPv4Address(origin)),
+    );
+
+    try testing.expectEqualSlices(u8, &origin.addr, &parsed.addr);
+    try testing.expectEqual(origin.port, parsed.port);
+}
+
+test "SocketAddress ptrCast/constCast aliases fd_t correctly" {
+    // Main point: writing through one view shows up in the other.)
+
+    const ip = IPv4Address{ .addr = .{ 123, 12, 3, 1 }, .port = 45678 };
+    var sa_storage = Self.initForAccept();
+
+    // Write via sockaddr.in view…
+    const in_ptr: *posix.sockaddr.in = sa_storage.ptrCastTo(.in);
+    in_ptr.* = .{
+        .addr = mem.bytesAsValue(u32, &ip.addr).*,
+        .port = mem.nativeToBig(u16, ip.port),
+    };
+
+    // …read via generic sockaddr view
+    const sa_val: posix.sockaddr = sa_storage.ptrCastTo(.sockaddr).*;
+    try testing.expectEqual(sa_val.family, posix.AF.INET);
+
+    // The underlying storage is actually shared.
+    // We can re-interpret as sockaddr.in again and compare.
+    const sa_in: posix.sockaddr.in = sa_storage.ptrCastTo(.in).*;
+
+    try testing.expectEqual(mem.bytesAsValue(u32, &ip.addr).*, sa_in.addr);
+    try testing.expectEqual(mem.nativeToBig(u16, ip.port), sa_in.port);
+}
+
 const std = @import("std");
 const mem = std.mem;
 const posix = std.posix;
 const debug = std.debug;
+const testing = std.testing;
+
 const IPv4Address = @import("./IPv4Address.zig");

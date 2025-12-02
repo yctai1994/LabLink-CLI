@@ -3,8 +3,8 @@ port: u16,
 
 const Self: type = @This();
 
-pub fn fromSocketAddress(sock_addr: *SocketAddress) Self {
-    const sa_in: posix.sockaddr.in = sock_addr.ptrCastTo(.in).*;
+pub fn fromSocketAddress(sa: *SocketAddress) Self {
+    const sa_in: posix.sockaddr.in = sa.ptrCastTo(.in).*;
     return .{
         .addr = mem.toBytes(sa_in.addr),
         .port = mem.toNative(u16, sa_in.port, .big),
