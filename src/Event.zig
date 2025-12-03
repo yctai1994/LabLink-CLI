@@ -1,8 +1,9 @@
-timestamp: ?Timestamp,
-prefix: EventPrefix,
-header: EventHeader,
-msgtxt: []const u8,
-suffix: EventSuffix,
+timestamp: ?Timestamp = null,
+prefix: EventPrefix = .none,
+header: EventHeader = .info,
+msgtxt: []const u8 = &.{},
+suffix: EventSuffix = .none,
+signal: EventSignal = .normal,
 
 const Self: type = @This();
 
@@ -266,6 +267,8 @@ const EventSuffix = enum {
         };
     }
 };
+
+pub const EventSignal = enum { normal, shutdown };
 
 const std = @import("std");
 const posix = std.posix;
