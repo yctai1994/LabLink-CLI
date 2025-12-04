@@ -9,6 +9,24 @@ pub const Logger = struct {
 
     const Self = @This();
 
+    pub fn init(allocator: mem.Allocator, cache_size: usize) !*Self {
+        const self: *Self = try allocator.create(Self);
+        errdefer allocator.destroy(self);
+
+        self.cache = try allocator.alloc(u8, cache_size);
+        errdefer allocator.free(self.cache);
+
+        self.fd_no = posix.STDOUT_FILENO;
+        self.stash = &.{};
+
+        return self;
+    }
+
+    pub fn deinit(self: *const Self, allocator: mem.Allocator) void {
+        allocator.free(self.cache);
+        allocator.destroy(self);
+    }
+
     pub fn stdout(cache: []u8) Self {
         return .{
             .fd_no = posix.STDOUT_FILENO,
@@ -207,6 +225,7 @@ test "Deterministic partial-write tests" {
 }
 
 const std = @import("std");
+const mem = std.mem;
 const posix = std.posix;
 const debug = std.debug;
 const testing = std.testing;

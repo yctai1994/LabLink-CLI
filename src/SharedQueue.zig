@@ -44,15 +44,15 @@ pub fn dequeue(self: *Self) !Event {
 
 test "A queue with thread-safety" {
     const SharedQueue: type = Self;
+    const page = testing.allocator;
 
-    var queue_cache: [8]Event = undefined;
-    var shared_queue = SharedQueue.init(&queue_cache);
+    const queue_cache: []Event = try page.alloc(Event, 8);
+    defer page.free(queue_cache);
 
-    var logger_cache: [1024]u8 = undefined;
-    var logger = Logger.stdout(&logger_cache);
+    var shared_queue = SharedQueue.init(queue_cache);
 
     const thread_producer = try Thread.spawn(.{}, producerExec, .{&shared_queue});
-    const thread_consumer = try Thread.spawn(.{}, consumerExec, .{ &shared_queue, &logger });
+    const thread_consumer = try Thread.spawn(.{}, consumerExec, .{ &shared_queue, page });
     thread_producer.join();
     thread_consumer.join();
 }
@@ -76,7 +76,10 @@ fn producerExec(queue: *Self) !void {
     queue.enqueue(.{ .signal = .shutdown }) catch unreachable;
 }
 
-fn consumerExec(queue: *Self, logger: *Logger) !void {
+fn consumerExec(queue: *Self, allocator: mem.Allocator) !void {
+    const logger: *Logger = try Logger.init(allocator, 1024);
+    defer logger.deinit(allocator);
+
     while (true) {
         const event: Event = queue.dequeue() catch unreachable;
         if (event.signal == .shutdown) return;
@@ -100,7 +103,9 @@ const MESSAGE_LIST: [10][]const u8 = .{
 const TIMEZONE_HOURS: comptime_int = 8;
 
 const std = @import("std");
+const mem = std.mem;
 const Thread = std.Thread;
+const testing = std.testing;
 
 const Event = @import("./Event.zig");
 const Queue: type = RingBufferQueue(Event, 8);
