@@ -1,11 +1,21 @@
 timestamp: ?Timestamp = null,
 prefix: EventPrefix = .none,
 header: EventHeader = .info,
-msgtxt: []const u8 = &.{},
 suffix: EventSuffix = .none,
 signal: EventSignal = .normal,
 
+buffer: [64]u8 = undefined,
+msgtxt: []const u8 = &.{},
+
 const Self: type = @This();
+
+pub fn setMessage(self: *Self, msg: []const u8) void {
+    // This function is not thread-safe
+    debug.assert(msg.len <= 64);
+
+    @memcpy(self.buffer[0..msg.len], msg);
+    self.msgtxt = self.buffer[0..msg.len];
+}
 
 const SECONDS_PER_MINUTE: comptime_int = 60;
 const SECONDS_PER_HOUR: comptime_int = 3_600;
