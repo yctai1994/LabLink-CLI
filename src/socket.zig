@@ -2,7 +2,7 @@ pub const Listener = struct {
     socket: posix.socket_t,
     addr: IPv4Address,
 
-    pub fn init(addr: IPv4Address, queue: *SharedQueue) !Listener {
+    pub fn init(addr: IPv4Address, queue: *EventQueue) !Listener {
         const sa = SocketAddress.fromIPv4Address(addr);
 
         const socket: posix.socket_t = try posix.socket(sa.family(), SOCKET_MODE, PROTOCOL);
@@ -24,7 +24,7 @@ pub const Listener = struct {
             .suffix = .none,
         };
         event.setMessage(buffer[0 .. written + 8]);
-        queue.enqueue(event) catch unreachable;
+        queue.enqueue(event);
 
         // = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
@@ -39,7 +39,7 @@ pub const Listener = struct {
         }
     }
 
-    pub fn listen(self: *const Listener, queue: *SharedQueue) !void {
+    pub fn listen(self: *const Listener, queue: *EventQueue) !void {
         try posix.listen(self.socket, BACKLOG_SIZE);
 
         var buffer: [64]u8 = undefined;
@@ -53,7 +53,7 @@ pub const Listener = struct {
             .suffix = .none,
         };
         event.setMessage(buffer[0 .. written + 13]);
-        queue.enqueue(event) catch unreachable;
+        queue.enqueue(event);
     }
 
     pub fn accept(self: *const Listener) !Client {
@@ -114,6 +114,6 @@ const debug = std.debug;
 
 const Event = @import("./Event.zig");
 const Logger = @import("./logger.zig").Logger;
-const SharedQueue = @import("./SharedQueue.zig");
+const EventQueue = @import("./queue.zig").EventQueue(8);
 const IPv4Address = @import("./IPv4Address.zig");
 const SocketAddress = @import("./SocketAddress.zig");

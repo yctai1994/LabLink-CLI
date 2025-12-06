@@ -1,81 +1,76 @@
-pub fn RingBufferQueue(comptime DATA: type, comptime SIZE: usize) type {
-    if (SIZE <= 1) @compileError("Queue(DATA, SIZE): `SIZE` should be larger than 1.");
-    if (SIZE & (SIZE - 1) != 0) @compileError("Queue(DATA, SIZE): `SIZE` should be power of 2.");
+pub fn EventQueue(comptime SIZE: usize) type {
+    if (SIZE <= 1) @compileError("EventQueue(SIZE): `SIZE` should be larger than 1.");
+    if (SIZE & (SIZE - 1) != 0) @compileError("Event(SIZE): `SIZE` should be power of 2.");
 
     return struct {
-        buff: []DATA,
+        mutex: Thread.Mutex,
+        cond: Thread.Condition,
+
+        buff: []Event,
         head: usize, // index to dequeue
         tail: usize, // index to enqueue
 
         const mask: usize = SIZE - 1;
         const Self: type = @This();
 
-        pub const RingBufferQueueError = error{
-            FullQueue,
-            EmptyQueue,
-        };
+        pub fn init(allocator: mem.Allocator) !*Self {
+            const self: *Self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
 
-        pub fn init(buff: []DATA) Self {
-            debug.assert(buff.len == SIZE);
-            return .{ .buff = buff, .head = 0, .tail = 0 };
+            self.buff = try allocator.alloc(Event, SIZE);
+            errdefer allocator.free(self.buff);
+
+            self.mutex = .{};
+            self.cond = .{};
+            self.head = 0;
+            self.tail = 0;
+
+            return self;
         }
 
-        pub fn isFull(self: *const Self) bool {
+        pub fn deinit(self: *const Self, allocator: mem.Allocator) void {
+            allocator.free(self.buff);
+            allocator.destroy(self);
+        }
+
+        pub inline fn isFull(self: *const Self) bool {
             return (self.tail - self.head) == SIZE;
         }
 
-        pub fn isEmpty(self: *const Self) bool {
+        pub inline fn isEmpty(self: *const Self) bool {
             return self.tail == self.head;
         }
 
-        pub fn enqueue(self: *Self, data: DATA) RingBufferQueueError!void {
-            if (self.isFull()) return error.FullQueue;
-            defer self.tail += 1;
-            self.buff[self.tail & mask] = data;
+        pub fn enqueue(self: *Self, event: Event) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            while (self.isFull()) self.cond.wait(&self.mutex);
+            defer {
+                self.tail += 1;
+                self.cond.signal(); // wake one waiting consumer, if any
+            }
+            self.buff[self.tail & mask] = event;
         }
 
-        pub fn dequeue(self: *Self) RingBufferQueueError!DATA {
-            if (self.isEmpty()) return error.EmptyQueue;
-            defer self.head += 1;
+        pub fn dequeue(self: *Self) Event {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            while (self.isEmpty()) self.cond.wait(&self.mutex);
+            defer {
+                self.head += 1;
+                self.cond.signal(); // wake one waiting producer, if any
+            }
             return self.buff[self.head & mask];
         }
     };
 }
 
-test "Single Thread Test" {
-    const Queue: type = RingBufferQueue(usize, 8);
-    var buffer: [8]usize = undefined;
-    var queue = Queue.init(&buffer);
-
-    {
-        for (0..8) |n| try queue.enqueue(n);
-        try testing.expectError(error.FullQueue, queue.enqueue(8));
-    }
-
-    {
-        for (0..4) |_| {
-            _ = try queue.dequeue();
-        }
-
-        for (0..4) |n| try queue.enqueue(8 + n);
-
-        for (0..3) |_| {
-            _ = try queue.dequeue();
-        }
-
-        try testing.expectEqual(7, try queue.dequeue());
-    }
-
-    {
-        for (0..3) |_| {
-            _ = try queue.dequeue();
-        }
-
-        try testing.expectEqual(11, try queue.dequeue());
-        try testing.expectError(error.EmptyQueue, queue.dequeue());
-    }
-}
-
 const std = @import("std");
+const mem = std.mem;
 const debug = std.debug;
+const Thread = std.Thread;
 const testing = std.testing;
+
+const Event = @import("./Event.zig");
