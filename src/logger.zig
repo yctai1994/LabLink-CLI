@@ -78,7 +78,8 @@ pub const Logger = struct {
         iovecs[iovec_index] = event.header.iovec();
         iovec_index += 1;
 
-        iovecs[iovec_index] = .{ .base = event.msgtxt.ptr, .len = event.msgtxt.len };
+        const msgtxt: []const u8 = event.buffer[0..event.msglen];
+        iovecs[iovec_index] = .{ .base = msgtxt.ptr, .len = msgtxt.len };
         iovec_index += 1;
 
         iovecs[iovec_index] = event.suffix.iovec();

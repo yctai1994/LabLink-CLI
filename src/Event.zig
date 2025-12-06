@@ -5,7 +5,7 @@ suffix: EventSuffix = .none,
 signal: EventSignal = .normal,
 
 buffer: [64]u8 = undefined,
-msgtxt: []const u8 = &.{},
+msglen: usize = undefined,
 
 const Self: type = @This();
 
@@ -14,7 +14,7 @@ pub fn setMessage(self: *Self, msg: []const u8) void {
     debug.assert(msg.len <= 64);
 
     @memcpy(self.buffer[0..msg.len], msg);
-    self.msgtxt = self.buffer[0..msg.len];
+    self.msglen = msg.len;
 }
 
 const SECONDS_PER_MINUTE: comptime_int = 60;
