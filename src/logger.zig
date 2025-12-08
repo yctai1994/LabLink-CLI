@@ -193,13 +193,6 @@ fn consume(cache: []u8, iovecs: []const posix.iovec_const, written: usize) Consu
     return cache[0..cache_index_to_stash];
 }
 
-fn copyto(dest: [*]u8, src: []const u8) void {
-    for (src, 0..) |value, index| {
-        dest[index] = value;
-    }
-    return;
-}
-
 test "Deterministic partial-write tests" {
     const STASH = "0123456789";
     const HEADER = "ABCDEFGHIJ";
@@ -235,3 +228,5 @@ const debug = std.debug;
 const testing = std.testing;
 
 const Event = @import("./Event.zig");
+
+const copyto = @import("./utils.zig").copyto;

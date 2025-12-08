@@ -56,7 +56,7 @@ pub const Listener = struct {
         queue.enqueue(event);
     }
 
-    pub fn accept(self: *const Listener) !Client {
+    pub fn accept(self: *const Listener, allocator: mem.Allocator) !*Client {
         var sa: SocketAddress = SocketAddress.initForAccept(); // client
 
         // ~/.../zig-x86_64-macos-0.16.0-dev.../lib/std/posix.zig:3409
@@ -64,41 +64,84 @@ pub const Listener = struct {
         const socket = try posix.accept(self.socket, sa.ptrCastTo(.sockaddr), &sa.size, 0);
         errdefer posix.close(socket);
 
-        return Client{ .socket = socket };
+        return try Client.init(allocator, socket);
     }
 };
 
 pub const Client = struct {
     socket: posix.socket_t,
 
-    pub fn init(socket: posix.socket_t) Client {
-        return .{ .socket = socket };
+    cache: []u8, // backing buffer for stash
+    stash: []u8, // always a slice into `cache`
+    // Invariant: `stash` is either empty (&.{}) or a subslice of `cache`.
+
+    const ClientError = error{ ClientClosed, LineTooLong };
+
+    pub fn init(allocator: mem.Allocator, socket: posix.socket_t) !*Client {
+        const self: *Client = try allocator.create(Client);
+        errdefer allocator.destroy(self);
+
+        self.socket = socket;
+
+        self.cache = try allocator.alloc(u8, 1024);
+        errdefer allocator.free(self.cache);
+
+        self.stash = &.{};
+
+        return self;
     }
 
-    pub fn deinit(self: *const Client) void {
+    pub fn deinit(self: *const Client, allocator: mem.Allocator) void {
         if (self.socket != INVALID_FD) {
             const mutable: *Client = @constCast(self);
             posix.close(mutable.socket);
             mutable.socket = INVALID_FD;
         }
+
+        allocator.free(self.cache);
+        allocator.destroy(self);
     }
 
     pub fn greet(self: *const Client) !void {
         const msg: []const u8 = "Hello (and goodbye, server is closing...)\n";
-        try writeAll(self.socket, msg);
+        try utils.writeAll(self.socket, msg);
+    }
+
+    pub fn echo(self: *Client, queue: *EventQueue) !void {
+        var buffer: []u8 = undefined;
+        outer: while (true) {
+            buffer = self.cache[self.stash.len..];
+            const obtained: usize = try posix.read(self.socket, buffer);
+
+            if (obtained == 0) return error.ClientClosed; // EOF
+
+            var index: usize = 0;
+            inner: while (index < obtained) : (index += 1) {
+                if (buffer[index] != '\n') continue :inner;
+                const message: []const u8 = switch (buffer[index - 1] == '\r') {
+                    true => self.cache[0..(self.stash.len + index - 1)], // '\r\n' is excluded
+                    false => self.cache[0..(self.stash.len + index)], // '\n' is excluded
+                };
+
+                var event: Event = .{
+                    .timestamp = try Event.Timestamp.now(TIMEZONE_HOURS),
+                    .prefix = .dash,
+                    .header = .info,
+                    .suffix = .none,
+                    .signal = .normal,
+                };
+                event.setMessage(message);
+                queue.enqueue(event);
+
+                utils.copyto(self.cache.ptr, buffer[(index + 1)..obtained]);
+                self.stash = self.cache[0..(obtained - index - 1)];
+                break :outer;
+            } else {
+                self.stash = self.cache[0..(self.stash.len + obtained)];
+            }
+        }
     }
 };
-
-fn writeAll(socket: posix.socket_t, msg: []const u8) !void {
-    var pos: usize = 0;
-    while (pos < msg.len) {
-        const written = try posix.write(socket, msg[pos..]);
-        if (written == 0) {
-            return error.Closed;
-        }
-        pos += written;
-    }
-}
 
 const TIMEZONE_HOURS: comptime_int = 8;
 const INVALID_FD: posix.socket_t = -1;
@@ -117,3 +160,5 @@ const Logger = @import("./logger.zig").Logger;
 const EventQueue = @import("./queue.zig").EventQueue(8);
 const IPv4Address = @import("./IPv4Address.zig");
 const SocketAddress = @import("./SocketAddress.zig");
+
+const utils = @import("./utils.zig");

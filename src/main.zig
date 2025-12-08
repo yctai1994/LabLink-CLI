@@ -29,9 +29,10 @@ pub fn main() !void {
 
     try listener.listen(queue);
 
-    const client: socket.Client = try listener.accept();
-    defer client.deinit();
+    const client: *socket.Client = try listener.accept(allocator);
+    defer client.deinit(allocator);
 
+    try client.echo(queue);
     try client.greet();
 }
 
