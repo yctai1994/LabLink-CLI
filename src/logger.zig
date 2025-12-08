@@ -35,27 +35,6 @@ pub const Logger = struct {
         };
     }
 
-    // Future: logger may have a configured timezone from a config file.
-    pub fn info(self: *Self, msgtxt: []const u8, comptime TIMEZONE_HOURS: isize) LoggerError!void {
-        try self.log(.{
-            .timestamp = try Event.Timestamp.now(TIMEZONE_HOURS),
-            .prefix = .dash,
-            .header = .info,
-            .msgtxt = msgtxt,
-            .suffix = .none,
-        });
-    }
-
-    pub fn warn(self: *Self, msgtxt: []const u8, comptime TIMEZONE_HOURS: isize) LoggerError!void {
-        try self.log(.{
-            .timestamp = try Event.Timestamp.now(TIMEZONE_HOURS),
-            .prefix = .dash,
-            .header = .warn,
-            .msgtxt = msgtxt,
-            .suffix = .none,
-        });
-    }
-
     pub fn log(self: *Self, event: Event) LoggerError!void {
         var iovecs: [6]posix.iovec_const = undefined;
         var iovec_index: usize = 0;
@@ -101,28 +80,40 @@ test "End-to-end write test" {
         "This is an warn msg.",
     };
     const result_list: [2][]const u8 = .{
-        Event.PREFIX_DASH ++ Event.HEADER_INFO ++ msgtxt_list[0] ++ Event.SUFFIX_NONE,
-        Event.PREFIX_DASH ++ Event.HEADER_WARN ++ msgtxt_list[1] ++ Event.SUFFIX_NONE,
+        Event.HEADER_INFO ++ msgtxt_list[0] ++ Event.SUFFIX_NONE,
+        Event.HEADER_WARN ++ msgtxt_list[1] ++ Event.SUFFIX_NONE,
     };
 
     const pipe: [2]posix.fd_t = try posix.pipe();
     defer posix.close(pipe[1]);
     defer posix.close(pipe[0]);
 
-    var logger_cache: [128]u8 = undefined;
+    var logger_cache: [64]u8 = undefined;
     var logger = Logger{
         .fd_no = pipe[1],
         .cache = &logger_cache,
         .stash = &.{},
     };
 
-    var read_buffer: [128]u8 = undefined;
+    var read_buffer: [64]u8 = undefined;
     var total_read: usize = undefined;
 
     {
         const msgtxt: []const u8 = msgtxt_list[0];
         const result: []const u8 = result_list[0];
-        try logger.info(msgtxt, 8);
+
+        var event: Event = .{
+            .timestamp = null,
+            .prefix = .none,
+            .header = .info,
+            .suffix = .none,
+            .signal = .normal,
+            .buffer = undefined,
+            .msglen = undefined,
+        };
+
+        event.setMessage(msgtxt);
+        try logger.log(event);
 
         total_read = 0;
         while (total_read < result.len) {
@@ -131,12 +122,24 @@ test "End-to-end write test" {
             total_read += n;
         }
 
-        try testing.expectEqualStrings(result, read_buffer[19..total_read]);
+        try testing.expectEqualStrings(result, read_buffer[0..total_read]);
     }
     {
         const msgtxt: []const u8 = msgtxt_list[1];
         const result: []const u8 = result_list[1];
-        try logger.warn(msgtxt, 8);
+
+        var event: Event = .{
+            .timestamp = null,
+            .prefix = .none,
+            .header = .warn,
+            .suffix = .none,
+            .signal = .normal,
+            .buffer = undefined,
+            .msglen = undefined,
+        };
+
+        event.setMessage(msgtxt);
+        try logger.log(event);
 
         total_read = 0;
         while (total_read < result.len) {
@@ -145,7 +148,7 @@ test "End-to-end write test" {
             total_read += n;
         }
 
-        try testing.expectEqualStrings(result, read_buffer[19..total_read]);
+        try testing.expectEqualStrings(result, read_buffer[0..total_read]);
     }
 }
 
