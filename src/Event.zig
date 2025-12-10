@@ -4,7 +4,7 @@ header: EventHeader = .info,
 suffix: EventSuffix = .none,
 signal: EventSignal = .normal,
 
-buffer: [64]u8 = undefined,
+buffer: [Config.INTERNAL_BUFFER_SIZE]u8 = undefined,
 msglen: usize = undefined,
 
 const Self: type = @This();
@@ -251,15 +251,18 @@ const EventPrefix = enum {
     }
 };
 
+pub const HEADER_NONE = "";
 pub const HEADER_INFO = "Info: ";
 pub const HEADER_WARN = "Warn: ";
 
 const EventHeader = enum {
+    none,
     info,
     warn,
 
     pub fn iovec(self: EventHeader) posix.iovec_const {
         return switch (self) {
+            .none => .{ .base = HEADER_NONE.ptr, .len = HEADER_NONE.len },
             .info => .{ .base = HEADER_INFO.ptr, .len = HEADER_INFO.len },
             .warn => .{ .base = HEADER_WARN.ptr, .len = HEADER_WARN.len },
         };
@@ -278,9 +281,11 @@ const EventSuffix = enum {
     }
 };
 
-pub const EventSignal = enum { normal, shutdown };
+pub const EventSignal = enum { normal, command, shutdown };
 
 const std = @import("std");
 const posix = std.posix;
 const debug = std.debug;
 const testing = std.testing;
+
+const Config = @import("./Config.zig");
