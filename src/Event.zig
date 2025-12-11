@@ -11,7 +11,7 @@ const Self: type = @This();
 
 pub fn setMessage(self: *Self, msg: []const u8) void {
     // This function is not thread-safe
-    debug.assert(msg.len <= 64);
+    debug.assert(msg.len <= Config.INTERNAL_BUFFER_SIZE);
 
     @memcpy(self.buffer[0..msg.len], msg);
     self.msglen = msg.len;
