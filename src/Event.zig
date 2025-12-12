@@ -239,7 +239,7 @@ test "Calendar math test" {
 pub const PREFIX_NONE = "";
 pub const PREFIX_DASH = " - ";
 
-const EventPrefix = enum {
+pub const EventPrefix = enum {
     none,
     dash,
 
@@ -255,7 +255,7 @@ pub const HEADER_NONE = "";
 pub const HEADER_INFO = "Info: ";
 pub const HEADER_WARN = "Warn: ";
 
-const EventHeader = enum {
+pub const EventHeader = enum {
     none,
     info,
     warn,
@@ -271,7 +271,7 @@ const EventHeader = enum {
 
 pub const SUFFIX_NONE = "\n";
 
-const EventSuffix = enum {
+pub const EventSuffix = enum {
     none,
 
     pub fn iovec(self: EventSuffix) posix.iovec_const {

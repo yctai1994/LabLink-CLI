@@ -2,7 +2,7 @@
 /// from arbitrary-sized chunks (e.g. from posix.read).
 ///
 /// Usage:
-///   - call receive() repeatedly
+///   - call receive(.{}) repeatedly
 ///   - each call may:
 ///       * return an Event (complete line),
 ///       * return null (need more data),
@@ -55,13 +55,13 @@ pub fn deinit(self: *Self, allocator: mem.Allocator) void {
     allocator.destroy(self);
 }
 
-pub fn receive(self: *Self) !?Event {
+pub fn receive(self: *Self, comptime opt: EventOption) !?Event {
     switch (self.state) {
-        .dirty => return try self.assemble(),
+        .dirty => return try self.assemble(opt),
         .clean => {
             const obtained: usize = try posix.read(self.socket.?, self.cache[self.stash.len..]);
             if (obtained == 0) return error.ClientClosed; // EOF
-            return try self.consume(self.cache[self.stash.len..(self.stash.len + obtained)]);
+            return try self.consume(self.cache[self.stash.len..(self.stash.len + obtained)], opt);
         },
     }
 }
@@ -79,9 +79,9 @@ test "Deterministic partial-read tests" {
 
     { // Empty line (\n) as first byte of chunk when stash is non-empty
         try utils.writeAll(pipe[1], "CMD");
-        cmd_opt = try self.receive();
+        cmd_opt = try self.receive(.{});
         try utils.writeAll(pipe[1], "\n");
-        cmd_opt = try self.receive();
+        cmd_opt = try self.receive(.{});
         try testing.expect(cmd_opt != null);
         const cmd: Event = cmd_opt.?;
 
@@ -91,7 +91,7 @@ test "Deterministic partial-read tests" {
     }
     { // single complete line
         try utils.writeAll(pipe[1], "MOVE 1.0\n");
-        cmd_opt = try self.receive();
+        cmd_opt = try self.receive(.{});
         try testing.expect(cmd_opt != null);
         const cmd: Event = cmd_opt.?;
 
@@ -101,21 +101,21 @@ test "Deterministic partial-read tests" {
     }
     { // partial line across chunks
         try utils.writeAll(pipe[1], "MO");
-        cmd_opt = try self.receive();
+        cmd_opt = try self.receive(.{});
         try testing.expect(cmd_opt == null);
         try testing.expectEqualStrings("MO", self.stash);
         try testing.expect(self.state == .clean);
     }
     {
         try utils.writeAll(pipe[1], "VE 1.");
-        cmd_opt = try self.receive();
+        cmd_opt = try self.receive(.{});
         try testing.expect(cmd_opt == null);
         try testing.expectEqualStrings("MOVE 1.", self.stash);
         try testing.expect(self.state == .clean);
     }
     {
         try utils.writeAll(pipe[1], "0\n");
-        cmd_opt = try self.receive();
+        cmd_opt = try self.receive(.{});
         try testing.expect(cmd_opt != null);
         const cmd: Event = cmd_opt.?;
 
@@ -126,14 +126,14 @@ test "Deterministic partial-read tests" {
 
     { // multiple commands in one chunk
         try utils.writeAll(pipe[1], "*IDN?\nPOS?\n");
-        cmd_opt = try self.receive();
+        cmd_opt = try self.receive(.{});
         try testing.expect(cmd_opt != null);
         const cmd1: Event = cmd_opt.?;
         try testing.expectEqualStrings("*IDN?", cmd1.buffer[0..cmd1.msglen]);
         try testing.expect(self.state == .dirty);
     }
     { // second command should already be in stash; no new data needed
-        cmd_opt = try self.receive();
+        cmd_opt = try self.receive(.{});
         try testing.expect(cmd_opt != null);
         const cmd2: Event = cmd_opt.?;
         try testing.expectEqualStrings("POS?", cmd2.buffer[0..cmd2.msglen]);
@@ -142,14 +142,14 @@ test "Deterministic partial-read tests" {
     }
     {
         try utils.writeAll(pipe[1], "CMD1\nCMD2\nPARTIAL");
-        cmd_opt = try self.receive();
+        cmd_opt = try self.receive(.{});
         try testing.expect(cmd_opt != null);
         const cmd1: Event = cmd_opt.?;
         try testing.expectEqualStrings("CMD1", cmd1.buffer[0..cmd1.msglen]);
         try testing.expect(self.state == .dirty);
     }
     {
-        cmd_opt = try self.receive();
+        cmd_opt = try self.receive(.{});
         try testing.expect(cmd_opt != null);
         const cmd2: Event = cmd_opt.?;
         try testing.expectEqualStrings("CMD2", cmd2.buffer[0..cmd2.msglen]);
@@ -159,11 +159,11 @@ test "Deterministic partial-read tests" {
 }
 
 // assemble potentially existing command string
-fn assemble(self: *Self) !?Event {
+fn assemble(self: *Self, comptime opt: EventOption) !?Event {
     debug.assert(self.state == .dirty);
 
     if (scan(self.stash)) |found| {
-        const command: Event = try emit(self.stash[0..found]);
+        const command: Event = try emit(self.stash[0..found], opt);
         const residue: []u8 = self.stash[(found + 1)..];
         if (residue.len == 0) {
             self.state = .clean;
@@ -180,14 +180,14 @@ fn assemble(self: *Self) !?Event {
 }
 
 // Consume in-coming string
-fn consume(self: *Self, chunk: []const u8) !?Event {
+fn consume(self: *Self, chunk: []const u8, comptime opt: EventOption) !?Event {
     debug.assert(self.state == .clean);
 
     if (chunk.len == 0) return null; // quick return;
 
     if (scan(chunk)) |found| {
         const cmd_len: usize = self.stash.len + found;
-        const command: Event = try emit(self.cache[0..cmd_len]);
+        const command: Event = try emit(self.cache[0..cmd_len], opt);
         const residue: []const u8 = chunk[(found + 1)..];
         if (residue.len == 0) {
             self.stash = &.{};
@@ -211,13 +211,20 @@ fn scan(slice: []const u8) ?usize {
     return null;
 }
 
-fn emit(slice: []const u8) !Event {
+const EventOption = struct {
+    timestamp: bool = false,
+    prefix: Event.EventPrefix = .none,
+    header: Event.EventHeader = .info,
+    suffix: Event.EventSuffix = .none,
+};
+
+fn emit(slice: []const u8, comptime opt: EventOption) !Event {
     var cmd: Event = .{
-        .timestamp = null,
-        .prefix = .none,
-        .header = .info,
-        .suffix = .none,
-        .signal = .normal,
+        .timestamp = if (opt.timestamp) try Event.Timestamp.now(Config.TIMEZONE_HOURS) else null,
+        .prefix = opt.prefix,
+        .header = opt.header,
+        .suffix = opt.suffix,
+        .signal = .command,
     };
     if (cmd.buffer.len < slice.len) return error.OutOfCache;
 
